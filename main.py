@@ -1,6 +1,9 @@
 import os
-from fastapi import FastAPI
+import re
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, EmailStr
+from database import create_document
 
 app = FastAPI()
 
@@ -63,6 +66,45 @@ def test_database():
     response["database_name"] = "✅ Set" if os.getenv("DATABASE_NAME") else "❌ Not Set"
     
     return response
+
+# ------------------- paired signup logic -------------------
+IVY_LEAGUE_DOMAINS = {
+    "harvard.edu",
+    "college.harvard.edu",
+    "mit.edu",  # not ivy but often requested; remove if strict
+    "yale.edu",
+    "princeton.edu",
+    "columbia.edu",
+    "brown.edu",
+    "dartmouth.edu",
+    "upenn.edu",
+    "wharton.upenn.edu",
+    "cornell.edu",
+}
+
+ivy_pattern = re.compile(r"^[^@]+@([^@]+)$")
+
+class SignupPayload(BaseModel):
+    email: EmailStr
+    source: str | None = None
+
+@app.post("/api/signup")
+def signup(payload: SignupPayload):
+    match = ivy_pattern.match(payload.email)
+    domain = match.group(1).lower() if match else ""
+
+    # allow subdomains of ivy league domains as well
+    def is_ivy(domain: str) -> bool:
+        return any(domain == d or domain.endswith("." + d) for d in IVY_LEAGUE_DOMAINS)
+
+    if not is_ivy(domain):
+        raise HTTPException(status_code=400, detail="email domain not eligible")
+
+    try:
+        doc_id = create_document("signup", payload.model_dump())
+        return {"ok": True, "id": doc_id}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 if __name__ == "__main__":
